@@ -97,7 +97,7 @@ def register():
     bpy.utils.register_module(__name__)
 
     # space_userprefs.py
-    from bpy.props import StringProperty, EnumProperty
+    from bpy.props import StringProperty, EnumProperty, BoolVectorProperty
     from bpy.types import WindowManager
 
     def addon_filter_items(self, context):
@@ -123,6 +123,7 @@ def register():
             description="Search within the selected filter",
             options={'TEXTEDIT_UPDATE'},
             )
+
     WindowManager.addon_filter = EnumProperty(
             items=addon_filter_items,
             name="Category",
@@ -138,6 +139,12 @@ def register():
             description="Display support level",
             default={'OFFICIAL', 'COMMUNITY'},
             options={'ENUM_FLAG'},
+            )
+
+    WindowManager.addon_show_errors = BoolVectorProperty(
+            description="Display add-ons errors",
+            default=(False, False),
+            size=2,
             )
     # done...
 

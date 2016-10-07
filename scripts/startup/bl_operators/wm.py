@@ -1913,6 +1913,8 @@ class WM_OT_addon_refresh(Operator):
         import addon_utils
 
         addon_utils.modules_refresh()
+        # refresh the UI
+        context.area.tag_redraw()
 
         return {'FINISHED'}
 

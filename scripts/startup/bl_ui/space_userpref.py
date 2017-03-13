@@ -1281,6 +1281,7 @@ class USERPREF_PT_addons(Panel):
 
     @staticmethod
     def draw_error(layout, message):
+        # NOTE: currently not used
         lines = message.split("\n")
         box = layout.box()
         sub = box.row()
@@ -1288,6 +1289,32 @@ class USERPREF_PT_addons(Panel):
         sub.label(icon='ERROR')
         for l in lines[1:]:
             box.label(l)
+
+    @staticmethod
+    def draw_addon_errors(layout, context, dicts, types=False, i=0, labels="Errors"):
+        # dicts - pass the defaultdict(set)
+        # types - variation on the UI icons
+        # i - index of the WindowManager.addon_show_errors BoolVectorProperty (0, 1, 2)
+        # labels - the title of the error block
+        box_dupli = layout.box()
+        row_dupli = box_dupli.row()
+        row_dupli.label(icon='INFO')
+        row_dupli_split = row_dupli.split(0.85)
+        row_dupli_split.label(labels)
+
+        # expand/collapse errors
+        row_dupli_split.prop(context.window_manager, "addon_show_errors", index=i,
+                 text="Show / Hide", toggle=True)
+
+        if context.window_manager.addon_show_errors[i]:
+            for addon in dicts:
+                box_a = box_dupli.box()
+                box_a.label("%s" % (addon), icon='NONE' if types else 'FILE_SCRIPT')
+                box_b = box_a.box()
+                col = box_b.column()
+                for i, files in enumerate(dicts[addon]):
+                    strings = "(%s)    %s" % (i + 1, files)
+                    col.label(strings, icon='FILE_SCRIPT' if types else 'LAYER_USED')
 
     def draw(self, context):
         import os
@@ -1303,6 +1330,9 @@ class USERPREF_PT_addons(Panel):
 
         # collect the categories that can be filtered on
         addons = [(mod, addon_utils.module_bl_info(mod)) for mod in addon_utils.modules(refresh=False)]
+        filter = context.window_manager.addon_filter
+        search = context.window_manager.addon_search.lower()
+        support = context.window_manager.addon_support
 
         split = layout.split(percentage=0.2)
         col = split.column()
@@ -1317,29 +1347,54 @@ class USERPREF_PT_addons(Panel):
         col = split.column()
 
         # set in addon_utils.modules_refresh()
-        if addon_utils.error_duplicates:
+        # First collect scripts that are used but have no script file.
+        module_names = {mod.__name__ for mod, info in addons}
+        missing_modules = {ext for ext in used_ext if ext not in module_names}
+
+        # Globals set in addon_utils.modules_refresh()
+        if (addon_utils.error_duplicates or
+            addon_utils.error_encoding or
+           (missing_modules and filter in {"All", "Enabled"})
+           ):
             box = col.box()
             row = box.row()
-            row.label("Multiple addons with the same name found!")
+            row.label("Add-on errors found!")
             row.label(icon='ERROR')
-            box.label("Please delete one of each pair:")
-            for (addon_name, addon_file, addon_path) in addon_utils.error_duplicates:
-                box.separator()
-                sub_col = box.column(align=True)
-                sub_col.label(addon_name + ":")
-                sub_col.label("    " + addon_file)
-                sub_col.label("    " + addon_path)
+            if addon_utils.error_duplicates:
+                self.draw_addon_errors(box, context, addon_utils.error_duplicates, types=True,
+                                        i=0, labels="Multiple add-ons with the same file / folder name")
+            if addon_utils.error_encoding:
+                self.draw_addon_errors(box, context, addon_utils.error_encoding, types=False,
+                                        i=1, labels="One or more add-on files have reading errors")
 
+            if missing_modules and filter in {"All", "Enabled"}:
+                box_missing = box.box()
+                row_missing = box_missing.row()
+                row_missing.label(icon='INFO')
+                row_missing_split = row_missing.split(0.85)
+                row_missing_split.label("Missing script files")
 
-        if addon_utils.error_encoding:
-            self.draw_error(col,
-                            "One or more addons do not have UTF-8 encoding\n"
-                            "(see console for details)",
-                            )
+                row_missing_split.prop(context.window_manager, "addon_show_errors", index=2,
+                                   text="Show / Hide", toggle=True)
 
-        filter = context.window_manager.addon_filter
-        search = context.window_manager.addon_search.lower()
-        support = context.window_manager.addon_support
+                module_names = {mod.__name__ for mod, info in addons}
+                if context.window_manager.addon_show_errors[2]:
+                    for module_name in sorted(missing_modules):
+                        is_enabled = module_name in used_ext
+                        # Addon UI Code
+                        box = box_missing.box()
+                        colsub = box.column()
+                        row = colsub.row(align=True)
+
+                        row.label(text="", icon='ERROR')
+
+                        if is_enabled:
+                            row.operator("wm.addon_disable", icon='CHECKBOX_HLT',
+                                         text="", emboss=False).module = module_name
+
+                        row.label(text=module_name, translate=False)
+
+            col.separator()
 
         # initialized on demand
         user_addon_paths = []
@@ -1455,30 +1510,6 @@ class USERPREF_PT_addons(Panel):
                                     traceback.print_exc()
                                     box_prefs.label(text="Error (see console)", icon='ERROR')
                                 del addon_preferences_class.layout
-
-        # Append missing scripts
-        # First collect scripts that are used but have no script file.
-        module_names = {mod.__name__ for mod, info in addons}
-        missing_modules = {ext for ext in used_ext if ext not in module_names}
-
-        if missing_modules and filter in {"All", "Enabled"}:
-            col.column().separator()
-            col.column().label(text="Missing script files")
-
-            module_names = {mod.__name__ for mod, info in addons}
-            for module_name in sorted(missing_modules):
-                is_enabled = module_name in used_ext
-                # Addon UI Code
-                box = col.column().box()
-                colsub = box.column()
-                row = colsub.row(align=True)
-
-                row.label(text="", icon='ERROR')
-
-                if is_enabled:
-                    row.operator("wm.addon_disable", icon='CHECKBOX_HLT', text="", emboss=False).module = module_name
-
-                row.label(text=module_name, translate=False)
 
 
 if __name__ == "__main__":  # only for live edit.

@@ -16,7 +16,7 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
-# <pep8-80 compliant>
+# <pep8 compliant>
 
 __all__ = (
     "paths",
@@ -31,9 +31,12 @@ __all__ = (
 import bpy as _bpy
 _user_preferences = _bpy.context.user_preferences
 
-error_encoding = False
-# (name, file, path)
-error_duplicates = []
+# collect duplicates, UTF-8 and other errors to display in user preferences UI
+# error_duplicates structure: dictionary[add-on name] contains a set of file paths
+# error_encoding structure  : dictionary[file path] contains a set of errors
+error_duplicates = {}
+error_encoding = {}
+
 addons_fake_modules = {}
 
 
@@ -58,16 +61,19 @@ def paths():
 
 
 def modules_refresh(module_cache=addons_fake_modules):
+    global error_duplicates
     global error_encoding
     import os
+    from collections import defaultdict
 
-    error_encoding = False
-    error_duplicates.clear()
+    error_duplicates = defaultdict(set)
+    error_encoding = defaultdict(set)
 
     path_list = paths()
 
     # fake module importing
     def fake_module(mod_name, mod_path, speedy=True, force_support=None):
+        global error_duplicates
         global error_encoding
 
         if _bpy.app.debug_python:
@@ -78,6 +84,7 @@ def modules_refresh(module_cache=addons_fake_modules):
             file_mod = open(mod_path, "r", encoding='UTF-8')
         except OSError as e:
             print("Error opening file %r: %s" % (mod_path, e))
+            error_encoding[mod_path].add(e)
             return None
 
         with file_mod:
@@ -89,9 +96,7 @@ def modules_refresh(module_cache=addons_fake_modules):
                     try:
                         l = line_iter.readline()
                     except UnicodeDecodeError as e:
-                        if not error_encoding:
-                            error_encoding = True
-                            print("Error reading file as UTF-8:", mod_path, e)
+                        error_encoding[mod_path].add(e)
                         return None
 
                     if len(l) == 0:
@@ -101,9 +106,7 @@ def modules_refresh(module_cache=addons_fake_modules):
                     try:
                         l = line_iter.readline()
                     except UnicodeDecodeError as e:
-                        if not error_encoding:
-                            error_encoding = True
-                            print("Error reading file as UTF-8:", mod_path, e)
+                        error_encoding[mod_path].add(e)
                         return None
 
                 data = "".join(lines)
@@ -114,10 +117,11 @@ def modules_refresh(module_cache=addons_fake_modules):
 
         try:
             ast_data = ast.parse(data, filename=mod_path)
-        except:
+        except Exception as e:
             print("Syntax error 'ast.parse' can't read %r" % mod_path)
             import traceback
             traceback.print_exc()
+            error_encoding[mod_path].add(e)
             ast_data = None
 
         body_info = None
@@ -136,10 +140,11 @@ def modules_refresh(module_cache=addons_fake_modules):
                 mod.bl_info = ast.literal_eval(body.value)
                 mod.__file__ = mod_path
                 mod.__time__ = os.path.getmtime(mod_path)
-            except:
+            except Exception as e:
                 print("AST error parsing bl_info for %s" % mod_name)
                 import traceback
                 traceback.print_exc()
+                error_encoding[mod_path].add(e)
                 raise
 
             if force_support is not None:
@@ -147,8 +152,8 @@ def modules_refresh(module_cache=addons_fake_modules):
 
             return mod
         else:
-            print("fake_module: addon missing 'bl_info' "
-                  "gives bad performance!: %r" % mod_path)
+            messages = "fake_module: Add-on missing 'bl_info' gives bad performance!"
+            error_encoding[mod_path].add(messages)
             return None
 
     modules_stale = set(module_cache.keys())
@@ -166,9 +171,9 @@ def modules_refresh(module_cache=addons_fake_modules):
             mod = module_cache.get(mod_name)
             if mod:
                 if mod.__file__ != mod_path:
-                    print("multiple addons with the same name:\n  %r\n  %r" %
-                          (mod.__file__, mod_path))
-                    error_duplicates.append((mod.bl_info["name"], mod.__file__, mod_path))
+                    temp_mod_name = mod.bl_info['name'] if mod.bl_info['name'] else "Nameless add-on"
+                    error_duplicates[temp_mod_name].add(mod.__file__)
+                    error_duplicates[temp_mod_name].add(mod_path)
 
                 elif mod.__time__ != os.path.getmtime(mod_path):
                     print("reloading addon:",
@@ -187,10 +192,36 @@ def modules_refresh(module_cache=addons_fake_modules):
                 if mod:
                     module_cache[mod_name] = mod
 
+    print_dict_list_err(error_duplicates,
+                "\n\nMultiple addons with the same file / folder name:")
+    print_dict_list_err(error_encoding,
+                "\n\nOne or more add-on files have reading / parsing errors:")
+
     # just in case we get stale modules, not likely
     for mod_stale in modules_stale:
         del module_cache[mod_stale]
     del modules_stale
+
+
+def print_dict_list_err(dicts, message="\n\n[ADD-ONS ERROR]"):
+    """
+    Prints the list of add-on registration errors in the console.
+
+    :arg dicts: Dictionary of errors to be printed in the console.
+    :type dicts: defaultdict(list or set)
+    :arg message: Optional title explanation.
+    :type message: string
+    """
+    if dicts:
+        try:
+            print(message)
+            for error_key in dicts:
+                print("\n[%s]" % (error_key))
+                for i, list_files in enumerate(dicts[error_key]):
+                    print("\n({}) {}".format(i + 1, list_files))
+        except:
+            import traceback
+            traceback.print_exc()
 
 
 def modules(module_cache=addons_fake_modules, *, refresh=True):

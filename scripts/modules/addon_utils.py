@@ -31,10 +31,9 @@ __all__ = (
 import bpy as _bpy
 _user_preferences = _bpy.context.user_preferences
 
-# collect duplicates and UTF-8 errors to display in user preferences UI
-error_duplicates = {}
-error_encoding = {}
-
+error_encoding = False
+# (name, file, path)
+error_duplicates = []
 addons_fake_modules = {}
 
 
@@ -59,13 +58,11 @@ def paths():
 
 
 def modules_refresh(module_cache=addons_fake_modules):
-    global error_duplicates
     global error_encoding
     import os
-    from collections import defaultdict
 
-    error_duplicates = defaultdict(set)
-    error_encoding = defaultdict(set)
+    error_encoding = False
+    error_duplicates.clear()
 
     path_list = paths()
 
@@ -92,7 +89,9 @@ def modules_refresh(module_cache=addons_fake_modules):
                     try:
                         l = line_iter.readline()
                     except UnicodeDecodeError as e:
-                        error_encoding[mod_path].add(e)
+                        if not error_encoding:
+                            error_encoding = True
+                            print("Error reading file as UTF-8:", mod_path, e)
                         return None
 
                     if len(l) == 0:
@@ -102,7 +101,9 @@ def modules_refresh(module_cache=addons_fake_modules):
                     try:
                         l = line_iter.readline()
                     except UnicodeDecodeError as e:
-                        error_encoding[mod_path].add(e)
+                        if not error_encoding:
+                            error_encoding = True
+                            print("Error reading file as UTF-8:", mod_path, e)
                         return None
 
                 data = "".join(lines)
@@ -163,12 +164,11 @@ def modules_refresh(module_cache=addons_fake_modules):
         for mod_name, mod_path in _bpy.path.module_names(path):
             modules_stale.discard(mod_name)
             mod = module_cache.get(mod_name)
-
             if mod:
                 if mod.__file__ != mod_path:
-                    temp_mod_name = mod.bl_info['name'] if mod.bl_info['name'] else "Nameless add-on"
-                    error_duplicates[temp_mod_name].add(mod.__file__)
-                    error_duplicates[temp_mod_name].add(mod_path)
+                    print("multiple addons with the same name:\n  %r\n  %r" %
+                          (mod.__file__, mod_path))
+                    error_duplicates.append((mod.bl_info["name"], mod.__file__, mod_path))
 
                 elif mod.__time__ != os.path.getmtime(mod_path):
                     print("reloading addon:",
@@ -186,21 +186,6 @@ def modules_refresh(module_cache=addons_fake_modules):
                                   force_support=force_support)
                 if mod:
                     module_cache[mod_name] = mod
-
-    # moved console print here so has cleaner output
-    if error_duplicates:
-        print("\n\nMultiple addons with the same file / folder name:")
-        for duplicates in error_duplicates:
-            print("\n[%s]" % (duplicates))
-            for i, files in enumerate(error_duplicates[duplicates]):
-                print("\n({}) {}".format(i + 1, files))
-
-    if error_encoding:
-        print("\n\nError reading files as UTF-8:")
-        for files in error_encoding:
-            print("\n File: (%s)" % (files))
-            for i, errors in enumerate(error_encoding[files]):
-                print("\n [Encoding Error] {}".format(errors))
 
     # just in case we get stale modules, not likely
     for mod_stale in modules_stale:
